@@ -257,3 +257,64 @@
     data
   )
 )
+
+(define-map skill-endorsements
+  { user: principal, skill-id: uint, endorser: principal }
+  {
+    endorsed-at: uint,
+    endorser-reputation: uint
+  }
+)
+
+(define-map endorsement-counts
+  { user: principal, skill-id: uint }
+  { count: uint }
+)
+
+(define-map user-endorsement-given
+  { endorser: principal, target-user: principal, skill-id: uint }
+  { endorsed: bool }
+)
+
+(define-public (endorse-skill (target-user principal) (skill-id uint))
+  (let (
+    (skill-data (map-get? skills { user: target-user, skill-id: skill-id }))
+    (existing-endorsement (map-get? user-endorsement-given { endorser: tx-sender, target-user: target-user, skill-id: skill-id }))
+    (current-count (default-to u0 (get count (map-get? endorsement-counts { user: target-user, skill-id: skill-id }))))
+    (endorser-reputation (get-user-skill-count tx-sender))
+  )
+    (asserts! (is-some skill-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (not (is-eq tx-sender target-user)) ERR_INVALID_INPUT)
+    (asserts! (is-none existing-endorsement) ERR_ALREADY_EXISTS)
+    
+    (map-set skill-endorsements
+      { user: target-user, skill-id: skill-id, endorser: tx-sender }
+      {
+        endorsed-at: stacks-block-height,
+        endorser-reputation: endorser-reputation
+      }
+    )
+    
+    (map-set endorsement-counts
+      { user: target-user, skill-id: skill-id }
+      { count: (+ current-count u1) }
+    )
+    
+    (ok (map-set user-endorsement-given
+      { endorser: tx-sender, target-user: target-user, skill-id: skill-id }
+      { endorsed: true }
+    ))
+  )
+)
+
+(define-read-only (get-skill-endorsement-count (user principal) (skill-id uint))
+  (default-to u0 (get count (map-get? endorsement-counts { user: user, skill-id: skill-id })))
+)
+
+(define-read-only (has-endorsed-skill (endorser principal) (target-user principal) (skill-id uint))
+  (is-some (map-get? user-endorsement-given { endorser: endorser, target-user: target-user, skill-id: skill-id }))
+)
+
+(define-read-only (get-endorsement-details (user principal) (skill-id uint) (endorser principal))
+  (map-get? skill-endorsements { user: user, skill-id: skill-id, endorser: endorser })
+)
