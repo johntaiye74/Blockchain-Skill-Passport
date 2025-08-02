@@ -318,3 +318,90 @@
 (define-read-only (get-endorsement-details (user principal) (skill-id uint) (endorser principal))
   (map-get? skill-endorsements { user: user, skill-id: skill-id, endorser: endorser })
 )
+
+(define-constant DEFAULT_SKILL_VALIDITY u144000)
+
+(define-map skill-expiry
+  { user: principal, skill-id: uint }
+  {
+    expires-at: uint,
+    renewable: bool,
+    renewal-count: uint
+  }
+)
+
+(define-map expired-skills
+  { user: principal }
+  { count: uint }
+)
+
+(define-public (set-skill-expiry (target-user principal) (skill-id uint) (validity-blocks uint))
+  (let (
+    (skill-data (map-get? skills { user: target-user, skill-id: skill-id }))
+    (issuer-info (map-get? verified-issuers { issuer: tx-sender }))
+  )
+    (asserts! (is-some skill-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (is-some issuer-info) ERR_ISSUER_NOT_FOUND)
+    (asserts! (get active (unwrap-panic issuer-info)) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get issuer (unwrap-panic skill-data)) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (> validity-blocks u0) ERR_INVALID_INPUT)
+    
+    (ok (map-set skill-expiry
+      { user: target-user, skill-id: skill-id }
+      {
+        expires-at: (+ stacks-block-height validity-blocks),
+        renewable: true,
+        renewal-count: u0
+      }
+    ))
+  )
+)
+
+(define-public (renew-skill (target-user principal) (skill-id uint) (additional-validity uint))
+  (let (
+    (skill-data (map-get? skills { user: target-user, skill-id: skill-id }))
+    (expiry-data (map-get? skill-expiry { user: target-user, skill-id: skill-id }))
+    (issuer-info (map-get? verified-issuers { issuer: tx-sender }))
+  )
+    (asserts! (is-some skill-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (is-some expiry-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (is-some issuer-info) ERR_ISSUER_NOT_FOUND)
+    (asserts! (get active (unwrap-panic issuer-info)) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get issuer (unwrap-panic skill-data)) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (get renewable (unwrap-panic expiry-data)) ERR_UNAUTHORIZED)
+    (asserts! (> additional-validity u0) ERR_INVALID_INPUT)
+    
+    (ok (map-set skill-expiry
+      { user: target-user, skill-id: skill-id }
+      {
+        expires-at: (+ stacks-block-height additional-validity),
+        renewable: true,
+        renewal-count: (+ (get renewal-count (unwrap-panic expiry-data)) u1)
+      }
+    ))
+  )
+)
+
+(define-read-only (is-skill-expired (user principal) (skill-id uint))
+  (match (map-get? skill-expiry { user: user, skill-id: skill-id })
+    expiry-data (>= stacks-block-height (get expires-at expiry-data))
+    false
+  )
+)
+
+(define-read-only (get-skill-expiry (user principal) (skill-id uint))
+  (map-get? skill-expiry { user: user, skill-id: skill-id })
+)
+
+(define-read-only (get-active-skills-count (user principal))
+  (let ((total-skills (get-user-skill-count user)))
+    (fold count-active-skills-iter (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) { user: user, count: u0 })
+  )
+)
+
+(define-private (count-active-skills-iter (skill-id uint) (data { user: principal, count: uint }))
+  (if (not (is-skill-expired (get user data) skill-id))
+    { user: (get user data), count: (+ (get count data) u1) }
+    data
+  )
+)
