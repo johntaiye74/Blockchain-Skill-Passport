@@ -405,3 +405,102 @@
     data
   )
 )
+
+(define-map user-badges
+  { user: principal }
+  {
+    first-skill: bool,
+    first-verified: bool,
+    category-expert: bool,
+    skill-collector: bool,
+    endorsement-leader: bool,
+    renewal-champion: bool
+  }
+)
+
+(define-map badge-earned-at
+  { user: principal, badge-type: (string-ascii 20) }
+  { earned-at: uint }
+)
+
+(define-private (check-and-award-badges (user principal))
+  (let (
+    (skill-count (get-user-skill-count user))
+    (verified-result (count-verified-skills user))
+    (verified-count (get count verified-result))
+    (current-badges (default-to 
+      { first-skill: false, first-verified: false, category-expert: false, 
+        skill-collector: false, endorsement-leader: false, renewal-champion: false }
+      (map-get? user-badges { user: user })))
+  )
+    (begin
+      (if (and (>= skill-count u1) (not (get first-skill current-badges)))
+        (begin
+          (map-set badge-earned-at { user: user, badge-type: "first-skill" } { earned-at: stacks-block-height })
+          (map-set user-badges { user: user } (merge current-badges { first-skill: true }))
+        )
+        false
+      )
+      
+      (if (and (>= verified-count u1) (not (get first-verified current-badges)))
+        (begin
+          (map-set badge-earned-at { user: user, badge-type: "first-verified" } { earned-at: stacks-block-height })
+          (map-set user-badges { user: user } (merge current-badges { first-verified: true }))
+        )
+        false
+      )
+      
+      (if (and (>= skill-count u10) (not (get skill-collector current-badges)))
+        (begin
+          (map-set badge-earned-at { user: user, badge-type: "skill-collector" } { earned-at: stacks-block-height })
+          (map-set user-badges { user: user } (merge current-badges { skill-collector: true }))
+        )
+        false
+      )
+      
+      (if (and (>= verified-count u5) (not (get category-expert current-badges)))
+        (begin
+          (map-set badge-earned-at { user: user, badge-type: "category-expert" } { earned-at: stacks-block-height })
+          (map-set user-badges { user: user } (merge current-badges { category-expert: true }))
+        )
+        false
+      )
+      
+      true
+    )
+  )
+)
+
+(define-read-only (get-user-badges (user principal))
+  (map-get? user-badges { user: user })
+)
+
+(define-read-only (get-badge-earned-at (user principal) (badge-type (string-ascii 20)))
+  (map-get? badge-earned-at { user: user, badge-type: badge-type })
+)
+
+(define-read-only (has-badge (user principal) (badge-type (string-ascii 20)))
+  (match (map-get? user-badges { user: user })
+    user-badge-data
+      (if (is-eq badge-type "first-skill")
+        (get first-skill user-badge-data)
+        (if (is-eq badge-type "first-verified")
+          (get first-verified user-badge-data)
+          (if (is-eq badge-type "category-expert")
+            (get category-expert user-badge-data)
+            (if (is-eq badge-type "skill-collector")
+              (get skill-collector user-badge-data)
+              (if (is-eq badge-type "endorsement-leader")
+                (get endorsement-leader user-badge-data)
+                (if (is-eq badge-type "renewal-champion")
+                  (get renewal-champion user-badge-data)
+                  false
+                )
+              )
+            )
+          )
+        )
+      )
+    false
+  )
+)
