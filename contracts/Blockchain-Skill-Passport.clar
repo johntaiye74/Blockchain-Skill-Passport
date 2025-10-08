@@ -504,3 +504,83 @@
     false
   )
 )
+
+
+(define-map skill-bounties
+  { user: principal, skill-id: uint }
+  { bounty-amount: uint, active: bool }
+)
+
+(define-map issuer-global-bounties
+  { issuer: principal, skill-name: (string-ascii 100) }
+  { bounty-amount: uint, active: bool }
+)
+
+(define-map skill-referrals
+  { referrer: principal, referee: principal, skill-name: (string-ascii 100) }
+  { claimed: bool, bounty-paid: uint, referred-at: uint }
+)
+
+(define-map user-referral-earnings
+  { user: principal }
+  { total-earned: uint, total-referrals: uint }
+)
+
+(define-public (set-skill-bounty (skill-id uint) (bounty-amount uint))
+  (let ((skill-data (map-get? skills { user: tx-sender, skill-id: skill-id })))
+    (asserts! (is-some skill-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (> bounty-amount u0) ERR_INVALID_INPUT)
+    (ok (map-set skill-bounties
+      { user: tx-sender, skill-id: skill-id }
+      { bounty-amount: bounty-amount, active: true }
+    ))
+  )
+)
+
+(define-public (set-issuer-bounty (skill-name (string-ascii 100)) (bounty-amount uint))
+  (let ((issuer-info (map-get? verified-issuers { issuer: tx-sender })))
+    (asserts! (is-some issuer-info) ERR_ISSUER_NOT_FOUND)
+    (asserts! (get active (unwrap-panic issuer-info)) ERR_UNAUTHORIZED)
+    (asserts! (> bounty-amount u0) ERR_INVALID_INPUT)
+    (ok (map-set issuer-global-bounties
+      { issuer: tx-sender, skill-name: skill-name }
+      { bounty-amount: bounty-amount, active: true }
+    ))
+  )
+)
+
+(define-public (claim-referral-bounty (referrer principal) (skill-name (string-ascii 100)) (referee-skill-id uint))
+  (let (
+    (referee-skill (map-get? skills { user: tx-sender, skill-id: referee-skill-id }))
+    (referral-data (map-get? skill-referrals { referrer: referrer, referee: tx-sender, skill-name: skill-name }))
+    (issuer-bounty (map-get? issuer-global-bounties { issuer: (get issuer (unwrap! referee-skill ERR_SKILL_NOT_FOUND)), skill-name: skill-name }))
+    (bounty-amt (if (is-some issuer-bounty) (get bounty-amount (unwrap-panic issuer-bounty)) u0))
+    (current-earnings (default-to { total-earned: u0, total-referrals: u0 } (map-get? user-referral-earnings { user: referrer })))
+  )
+    (asserts! (is-some referee-skill) ERR_SKILL_NOT_FOUND)
+    (asserts! (get verified (unwrap-panic referee-skill)) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get skill-name (unwrap-panic referee-skill)) skill-name) ERR_INVALID_INPUT)
+    (asserts! (is-none referral-data) ERR_ALREADY_EXISTS)
+    (asserts! (> bounty-amt u0) ERR_INVALID_INPUT)
+    (map-set skill-referrals
+      { referrer: referrer, referee: tx-sender, skill-name: skill-name }
+      { claimed: true, bounty-paid: bounty-amt, referred-at: stacks-block-height }
+    )
+    (ok (map-set user-referral-earnings
+      { user: referrer }
+      { total-earned: (+ (get total-earned current-earnings) bounty-amt), total-referrals: (+ (get total-referrals current-earnings) u1) }
+    ))
+  )
+)
+
+(define-read-only (get-referral-earnings (user principal))
+  (default-to { total-earned: u0, total-referrals: u0 } (map-get? user-referral-earnings { user: user }))
+)
+
+(define-read-only (get-skill-bounty (user principal) (skill-id uint))
+  (map-get? skill-bounties { user: user, skill-id: skill-id })
+)
+
+(define-read-only (get-issuer-bounty (issuer principal) (skill-name (string-ascii 100)))
+  (map-get? issuer-global-bounties { issuer: issuer, skill-name: skill-name })
+)
