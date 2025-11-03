@@ -584,3 +584,107 @@
 (define-read-only (get-issuer-bounty (issuer principal) (skill-name (string-ascii 100)))
   (map-get? issuer-global-bounties { issuer: issuer, skill-name: skill-name })
 )
+
+(define-map skill-challenges
+  { challenge-id: uint }
+  {
+    challenger: principal,
+    target-user: principal,
+    skill-id: uint,
+    challenge-text: (string-ascii 300),
+    created-at: uint,
+    status: (string-ascii 20),
+    proof-submitted: bool,
+    votes-for: uint,
+    votes-against: uint,
+    resolved-at: uint
+  }
+)
+
+(define-map challenge-proofs
+  { challenge-id: uint }
+  { proof-text: (string-ascii 500), submitted-at: uint }
+)
+
+(define-map challenge-votes
+  { challenge-id: uint, voter: principal }
+  { vote-for: bool, voted-at: uint }
+)
+
+(define-map skill-credibility
+  { user: principal, skill-id: uint }
+  { score: uint, challenges-won: uint, challenges-lost: uint }
+)
+
+(define-data-var challenge-counter uint u0)
+
+(define-public (create-challenge (target-user principal) (skill-id uint) (challenge-text (string-ascii 300)))
+  (let (
+    (skill-data (map-get? skills { user: target-user, skill-id: skill-id }))
+    (new-challenge-id (+ (var-get challenge-counter) u1))
+  )
+    (asserts! (is-some skill-data) ERR_SKILL_NOT_FOUND)
+    (asserts! (not (is-eq tx-sender target-user)) ERR_INVALID_INPUT)
+    (asserts! (> (len challenge-text) u0) ERR_INVALID_INPUT)
+    (var-set challenge-counter new-challenge-id)
+    (ok (map-set skill-challenges
+      { challenge-id: new-challenge-id }
+      {
+        challenger: tx-sender,
+        target-user: target-user,
+        skill-id: skill-id,
+        challenge-text: challenge-text,
+        created-at: stacks-block-height,
+        status: "pending",
+        proof-submitted: false,
+        votes-for: u0,
+        votes-against: u0,
+        resolved-at: u0
+      }
+    ))
+  )
+)
+
+(define-public (submit-proof (challenge-id uint) (proof-text (string-ascii 500)))
+  (let ((challenge (map-get? skill-challenges { challenge-id: challenge-id })))
+    (asserts! (is-some challenge) ERR_SKILL_NOT_FOUND)
+    (asserts! (is-eq tx-sender (get target-user (unwrap-panic challenge))) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get status (unwrap-panic challenge)) "pending") ERR_INVALID_INPUT)
+    (asserts! (> (len proof-text) u0) ERR_INVALID_INPUT)
+    (map-set challenge-proofs { challenge-id: challenge-id } { proof-text: proof-text, submitted-at: stacks-block-height })
+    (ok (map-set skill-challenges { challenge-id: challenge-id } (merge (unwrap-panic challenge) { proof-submitted: true, status: "voting" })))
+  )
+)
+
+(define-public (vote-on-challenge (challenge-id uint) (vote-for bool))
+  (let (
+    (challenge (map-get? skill-challenges { challenge-id: challenge-id }))
+    (existing-vote (map-get? challenge-votes { challenge-id: challenge-id, voter: tx-sender }))
+  )
+    (asserts! (is-some challenge) ERR_SKILL_NOT_FOUND)
+    (asserts! (is-eq (get status (unwrap-panic challenge)) "voting") ERR_INVALID_INPUT)
+    (asserts! (is-none existing-vote) ERR_ALREADY_EXISTS)
+    (map-set challenge-votes { challenge-id: challenge-id, voter: tx-sender } { vote-for: vote-for, voted-at: stacks-block-height })
+    (ok (map-set skill-challenges
+      { challenge-id: challenge-id }
+      (merge (unwrap-panic challenge) 
+        {
+          votes-for: (if vote-for (+ (get votes-for (unwrap-panic challenge)) u1) (get votes-for (unwrap-panic challenge))),
+          votes-against: (if (not vote-for) (+ (get votes-against (unwrap-panic challenge)) u1) (get votes-against (unwrap-panic challenge)))
+        }
+      )
+    ))
+  )
+)
+
+(define-read-only (get-challenge (challenge-id uint))
+  (map-get? skill-challenges { challenge-id: challenge-id })
+)
+
+(define-read-only (get-challenge-proof (challenge-id uint))
+  (map-get? challenge-proofs { challenge-id: challenge-id })
+)
+
+(define-read-only (get-skill-credibility (user principal) (skill-id uint))
+  (default-to { score: u100, challenges-won: u0, challenges-lost: u0 } (map-get? skill-credibility { user: user, skill-id: skill-id }))
+)
